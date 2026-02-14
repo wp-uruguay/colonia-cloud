@@ -1,0 +1,11 @@
+
+> coloniacloud@0.1.0 dev
+> next dev
+
+▲ Next.js 16.1.6 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://10.13.73.4:3000
+
+✓ Starting...
+✓ Ready in 1932ms
+ GET / 200 in 2.8s (compile: 2.0s, render: 786ms)
