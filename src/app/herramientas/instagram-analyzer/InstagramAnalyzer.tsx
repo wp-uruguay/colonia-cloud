@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 
 interface AnalysisResult {
   username: string;
@@ -39,6 +40,7 @@ interface AnalysisResult {
     engagementPerPost: number;
   };
   demo: boolean;
+  authenticated?: boolean;
 }
 
 function formatNumber(n: number): string {
@@ -103,7 +105,7 @@ function ReachRow({ label, value }: { label: string; value: string }) {
     reduced: { icon: "⚠", text: "text-yellow-600" },
     blocked: { icon: "✕", text: "text-red-600" },
     restricted: { icon: "✕", text: "text-red-600" },
-    unknown: { icon: "?", text: "text-slate-400" },
+    unknown: { icon: "—", text: "text-slate-400" },
   };
   const c = config[value] ?? config.unknown;
   return (
@@ -116,14 +118,62 @@ function ReachRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+// Instagram logo SVG
+function InstagramIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/>
+    </svg>
+  );
+}
+
 export default function InstagramAnalyzer() {
+  const searchParams = useSearchParams();
   const [username, setUsername] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [oauthEnabled, setOauthEnabled] = useState(false);
   const resultsRef = useRef<HTMLDivElement>(null);
 
-  async function analyze(e: React.FormEvent) {
+  // Check if OAuth is configured
+  useEffect(() => {
+    fetch("/api/instagram/auth", { method: "HEAD" })
+      .then((r) => setOauthEnabled(r.status !== 503))
+      .catch(() => setOauthEnabled(false));
+  }, []);
+
+  // Handle OAuth callback data
+  useEffect(() => {
+    const dataParam = searchParams.get("data");
+    const errorParam = searchParams.get("error");
+
+    if (dataParam) {
+      try {
+        const parsed = JSON.parse(decodeURIComponent(dataParam));
+        setResult(parsed);
+        setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
+        // Clean URL
+        window.history.replaceState({}, "", "/herramientas/instagram-analyzer");
+      } catch {
+        setError("Error al procesar los datos de Instagram.");
+      }
+    }
+
+    if (errorParam) {
+      const msgs: Record<string, string> = {
+        user_denied: "Cancelaste la autorizacion de Instagram.",
+        access_denied: "Acceso denegado por Instagram.",
+        token_exchange: "Error al obtener el token. Intenta de nuevo.",
+        profile_fetch: "Error al obtener el perfil. Intenta de nuevo.",
+        config: "La integracion no esta configurada.",
+      };
+      setError(msgs[errorParam] ?? "Error al conectar con Instagram.");
+      window.history.replaceState({}, "", "/herramientas/instagram-analyzer");
+    }
+  }, [searchParams]);
+
+  async function analyzeDemo(e: React.FormEvent) {
     e.preventDefault();
     if (!username.trim()) return;
     setLoading(true);
@@ -144,6 +194,12 @@ export default function InstagramAnalyzer() {
     }
   }
 
+  function reset() {
+    setResult(null);
+    setError(null);
+    setUsername("");
+  }
+
   return (
     <div className="mx-auto w-full max-w-6xl px-6 py-16 space-y-12">
       {/* Hero */}
@@ -153,42 +209,71 @@ export default function InstagramAnalyzer() {
           Analizador de Instagram
         </h1>
         <p className="mx-auto max-w-xl text-slate-600">
-          Ingresa un usuario de Instagram para analizar su engagement, detectar shadowban y obtener metricas clave de la cuenta.
+          Conecta tu cuenta para obtener datos reales de engagement, metricas de alcance y analisis de tu perfil.
         </p>
       </div>
 
-      {/* Form */}
-      <form onSubmit={analyze} className="mx-auto max-w-xl">
-        <div className="flex gap-3">
-          <div className="relative flex-1">
-            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-medium select-none">@</span>
-            <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="usuario_de_instagram"
-              className="w-full rounded-xl border border-slate-200 bg-white py-3 pl-8 pr-4 text-slate-900 outline-none ring-0 transition placeholder:text-slate-400 focus:border-black focus:ring-1 focus:ring-black"
-              autoComplete="off"
-              spellCheck={false}
-            />
+      {/* Auth options */}
+      {!result && (
+        <div className="mx-auto max-w-xl space-y-4">
+          {/* Login with Instagram */}
+          {oauthEnabled && (
+            <a
+              href="/api/instagram/auth"
+              className="flex w-full items-center justify-center gap-3 rounded-xl bg-gradient-to-r from-purple-600 via-pink-600 to-orange-500 px-6 py-3.5 text-sm font-semibold text-white transition hover:opacity-90"
+            >
+              <InstagramIcon className="h-5 w-5" />
+              Analizar mi cuenta con Instagram
+            </a>
+          )}
+
+          {/* Divider */}
+          <div className="flex items-center gap-3">
+            <div className="h-px flex-1 bg-slate-200" />
+            <span className="text-xs text-slate-400">
+              {oauthEnabled ? "o analisis de demo" : "analizar cuenta publica (modo demo)"}
+            </span>
+            <div className="h-px flex-1 bg-slate-200" />
           </div>
-          <button
-            type="submit"
-            disabled={loading || !username.trim()}
-            className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {loading ? (
-              <span className="flex items-center gap-2">
-                <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
-                Analizando
-              </span>
-            ) : "Analizar"}
-          </button>
+
+          {/* Demo search */}
+          <form onSubmit={analyzeDemo} className="flex gap-3">
+            <div className="relative flex-1">
+              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-medium select-none">@</span>
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="cualquier_usuario"
+                className="w-full rounded-xl border border-slate-200 bg-white py-3 pl-8 pr-4 text-slate-900 outline-none ring-0 transition placeholder:text-slate-400 focus:border-black focus:ring-1 focus:ring-black"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={loading || !username.trim()}
+              className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loading ? (
+                <span className="flex items-center gap-2">
+                  <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Analizando
+                </span>
+              ) : "Demo"}
+            </button>
+          </form>
+
+          {!oauthEnabled && (
+            <p className="text-center text-xs text-slate-400">
+              Para datos reales, conecta la app con las credenciales de Instagram API.
+            </p>
+          )}
         </div>
-      </form>
+      )}
 
       {error && (
         <div className="mx-auto max-w-xl rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -214,18 +299,39 @@ export default function InstagramAnalyzer() {
       {/* Results */}
       {result && !loading && (
         <div ref={resultsRef} className="space-y-6">
+          {/* Banners */}
+          {result.authenticated && (
+            <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800 flex items-center justify-between gap-4">
+              <span><strong>Datos reales.</strong> Analisis obtenido directamente desde la API oficial de Instagram.</span>
+              <button onClick={reset} className="shrink-0 text-xs font-semibold text-green-700 hover:text-green-900 underline">
+                Nueva busqueda
+              </button>
+            </div>
+          )}
           {result.demo && (
-            <div className="rounded-xl border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm text-yellow-800">
-              <strong>Modo demo:</strong> No se pudo obtener datos reales de Instagram. Los datos mostrados son una simulacion basada en el nombre de usuario para ilustrar las metricas disponibles.
+            <div className="rounded-xl border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm text-yellow-800 flex items-center justify-between gap-4">
+              <span><strong>Modo demo:</strong> No se pudo obtener datos reales. Los datos son una simulacion ilustrativa.</span>
+              <button onClick={reset} className="shrink-0 text-xs font-semibold text-yellow-700 hover:text-yellow-900 underline">
+                Nueva busqueda
+              </button>
             </div>
           )}
 
           {/* Profile header */}
           <div className="glass rounded-2xl p-6">
             <div className="flex items-center gap-4">
-              <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-purple-500 via-pink-500 to-orange-400 text-white text-xl font-bold">
-                {result.profile.fullName?.[0]?.toUpperCase() ?? result.username[0]?.toUpperCase()}
-              </div>
+              {result.profile.profilePic ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={result.profile.profilePic}
+                  alt={result.username}
+                  className="h-14 w-14 flex-shrink-0 rounded-full object-cover"
+                />
+              ) : (
+                <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-purple-500 via-pink-500 to-orange-400 text-white text-xl font-bold">
+                  {(result.profile.fullName ?? result.username)[0]?.toUpperCase()}
+                </div>
+              )}
               <div className="flex-1 min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <h2 className="text-lg font-semibold text-slate-900">@{result.username}</h2>
@@ -238,7 +344,7 @@ export default function InstagramAnalyzer() {
                     {result.profile.accountType}
                   </span>
                 </div>
-                {result.profile.fullName && (
+                {result.profile.fullName && result.profile.fullName !== result.username && (
                   <p className="text-sm text-slate-600">{result.profile.fullName}</p>
                 )}
                 {result.profile.bio && (
@@ -251,21 +357,17 @@ export default function InstagramAnalyzer() {
           {/* Stats row */}
           <div className="grid gap-4 sm:grid-cols-4">
             {[
-              { label: "Seguidores", value: formatNumber(result.profile.followers), sub: null },
-              { label: "Siguiendo", value: formatNumber(result.profile.following), sub: null },
-              { label: "Publicaciones", value: formatNumber(result.profile.posts), sub: null },
+              { label: "Seguidores", value: formatNumber(result.profile.followers) },
+              { label: "Siguiendo", value: formatNumber(result.profile.following) },
+              { label: "Publicaciones", value: formatNumber(result.profile.posts) },
               {
                 label: "Ratio F/F",
                 value: `${result.ratios.followerFollowing}x`,
-                sub: result.ratios.followerFollowing >= 1 ? "Saludable" : "Bajo",
               },
             ].map((stat) => (
               <div key={stat.label} className="glass rounded-2xl p-5 text-center">
                 <p className="text-xs font-semibold uppercase text-slate-500">{stat.label}</p>
                 <p className="mt-2 text-2xl font-semibold text-slate-900">{stat.value}</p>
-                {stat.sub && (
-                  <p className="mt-1 text-xs text-slate-500">{stat.sub}</p>
-                )}
               </div>
             ))}
           </div>
@@ -314,12 +416,12 @@ export default function InstagramAnalyzer() {
               )}
               {result.shadowban.status === "shadowbanned" && (
                 <div className="rounded-xl border border-red-100 bg-red-50 p-3 text-xs text-red-700">
-                  Tu contenido puede no aparecer en busquedas ni en la pagina de Explorar. Evita hashtags prohibidos y revisa el contenido reciente.
+                  Tu contenido puede no aparecer en busquedas ni en Explorar. Evita hashtags prohibidos y revisa el contenido reciente.
                 </div>
               )}
               {result.shadowban.status === "warning" && (
                 <div className="rounded-xl border border-yellow-100 bg-yellow-50 p-3 text-xs text-yellow-700">
-                  Se detectaron senales de alcance reducido. Reduce el uso masivo de hashtags y evita acciones repetitivas.
+                  Senales de alcance reducido detectadas. Reduce el uso masivo de hashtags y evita acciones repetitivas.
                 </div>
               )}
             </div>
@@ -341,9 +443,7 @@ export default function InstagramAnalyzer() {
                   <p className="text-xs font-semibold uppercase text-slate-500">Mejores dias</p>
                   <div className="mt-2 flex flex-wrap gap-1">
                     {result.posting.bestDays.map((day) => (
-                      <span key={day} className="rounded-lg bg-black px-2 py-1 text-xs font-semibold text-white">
-                        {day}
-                      </span>
+                      <span key={day} className="rounded-lg bg-black px-2 py-1 text-xs font-semibold text-white">{day}</span>
                     ))}
                   </div>
                 </div>
@@ -353,9 +453,7 @@ export default function InstagramAnalyzer() {
                   <p className="text-xs font-semibold uppercase text-slate-500">Mejores horarios</p>
                   <div className="mt-2 flex flex-wrap gap-1">
                     {result.posting.bestHours.map((hour) => (
-                      <span key={hour} className="rounded-lg bg-black px-2 py-1 text-xs font-semibold text-white">
-                        {hour}
-                      </span>
+                      <span key={hour} className="rounded-lg bg-black px-2 py-1 text-xs font-semibold text-white">{hour}</span>
                     ))}
                   </div>
                 </div>
@@ -369,14 +467,12 @@ export default function InstagramAnalyzer() {
               <p className="font-semibold text-slate-900">¿Queres mejorar tu estrategia en redes?</p>
               <p className="text-sm text-slate-600">Trabajamos contigo para escalar tu presencia digital con datos reales.</p>
             </div>
-            <a href="/contacto" className="btn-primary flex-shrink-0">
-              Contactar
-            </a>
+            <a href="/contacto" className="btn-primary flex-shrink-0">Contactar</a>
           </div>
         </div>
       )}
 
-      {/* Info boxes */}
+      {/* Feature cards (shown when no result) */}
       {!result && !loading && (
         <div className="grid gap-4 sm:grid-cols-3">
           {[
