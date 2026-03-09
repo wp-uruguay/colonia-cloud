@@ -3,6 +3,17 @@ export const mainNav = [
   { title: "Nosotros", href: "/nosotros" },
   { title: "Clientes", href: "/clientes" },
   { title: "Servicios", href: "/servicios" },
+  {
+    title: "Herramientas",
+    href: "/herramientas",
+    children: [
+      {
+        title: "Agente Instagram",
+        href: "/herramientas/instagram-analyzer",
+        description: "Analizá perfiles públicos de Instagram y obtené métricas clave.",
+      },
+    ],
+  },
   { title: "Contacto", href: "/contacto" },
 ];
 
