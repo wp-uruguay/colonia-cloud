@@ -1,7 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { useSearchParams } from "next/navigation";
+import { useState, useRef } from "react";
 
 interface AnalysisResult {
   username: string;
@@ -128,50 +127,11 @@ function InstagramIcon({ className }: { className?: string }) {
 }
 
 export default function InstagramAnalyzer() {
-  const searchParams = useSearchParams();
   const [username, setUsername] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [oauthEnabled, setOauthEnabled] = useState(false);
   const resultsRef = useRef<HTMLDivElement>(null);
-
-  // Check if OAuth is configured
-  useEffect(() => {
-    fetch("/api/instagram/auth", { method: "HEAD" })
-      .then((r) => setOauthEnabled(r.status !== 503))
-      .catch(() => setOauthEnabled(false));
-  }, []);
-
-  // Handle OAuth callback data
-  useEffect(() => {
-    const dataParam = searchParams.get("data");
-    const errorParam = searchParams.get("error");
-
-    if (dataParam) {
-      try {
-        const parsed = JSON.parse(decodeURIComponent(dataParam));
-        setResult(parsed);
-        setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
-        // Clean URL
-        window.history.replaceState({}, "", "/herramientas/instagram-analyzer");
-      } catch {
-        setError("Error al procesar los datos de Instagram.");
-      }
-    }
-
-    if (errorParam) {
-      const msgs: Record<string, string> = {
-        user_denied: "Cancelaste la autorizacion de Instagram.",
-        access_denied: "Acceso denegado por Instagram.",
-        token_exchange: "Error al obtener el token. Intenta de nuevo.",
-        profile_fetch: "Error al obtener el perfil. Intenta de nuevo.",
-        config: "La integracion no esta configurada.",
-      };
-      setError(msgs[errorParam] ?? "Error al conectar con Instagram.");
-      window.history.replaceState({}, "", "/herramientas/instagram-analyzer");
-    }
-  }, [searchParams]);
 
   async function analyzeDemo(e: React.FormEvent) {
     e.preventDefault();
@@ -209,34 +169,13 @@ export default function InstagramAnalyzer() {
           Analizador de Instagram
         </h1>
         <p className="mx-auto max-w-xl text-slate-600">
-          Conecta tu cuenta para obtener datos reales de engagement, metricas de alcance y analisis de tu perfil.
+          Analizá cualquier cuenta publica de Instagram: engagement, metricas de alcance y datos de perfil.
         </p>
       </div>
 
-      {/* Auth options */}
+      {/* Search */}
       {!result && (
-        <div className="mx-auto max-w-xl space-y-4">
-          {/* Login with Instagram */}
-          {oauthEnabled && (
-            <a
-              href="/api/instagram/auth"
-              className="flex w-full items-center justify-center gap-3 rounded-xl bg-gradient-to-r from-purple-600 via-pink-600 to-orange-500 px-6 py-3.5 text-sm font-semibold text-white transition hover:opacity-90"
-            >
-              <InstagramIcon className="h-5 w-5" />
-              Analizar mi cuenta con Instagram
-            </a>
-          )}
-
-          {/* Divider */}
-          <div className="flex items-center gap-3">
-            <div className="h-px flex-1 bg-slate-200" />
-            <span className="text-xs text-slate-400">
-              {oauthEnabled ? "o analisis de demo" : "analizar cuenta publica (modo demo)"}
-            </span>
-            <div className="h-px flex-1 bg-slate-200" />
-          </div>
-
-          {/* Demo search */}
+        <div className="mx-auto max-w-xl">
           <form onSubmit={analyzeDemo} className="flex gap-3">
             <div className="relative flex-1">
               <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-medium select-none">@</span>
@@ -244,7 +183,7 @@ export default function InstagramAnalyzer() {
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="cualquier_usuario"
+                placeholder="nombre_de_usuario"
                 className="w-full rounded-xl border border-slate-200 bg-white py-3 pl-8 pr-4 text-slate-900 outline-none ring-0 transition placeholder:text-slate-400 focus:border-black focus:ring-1 focus:ring-black"
                 autoComplete="off"
                 spellCheck={false}
@@ -263,15 +202,9 @@ export default function InstagramAnalyzer() {
                   </svg>
                   Analizando
                 </span>
-              ) : "Demo"}
+              ) : "Analizar"}
             </button>
           </form>
-
-          {!oauthEnabled && (
-            <p className="text-center text-xs text-slate-400">
-              Para datos reales, conecta la app con las credenciales de Instagram API.
-            </p>
-          )}
         </div>
       )}
 
@@ -300,9 +233,9 @@ export default function InstagramAnalyzer() {
       {result && !loading && (
         <div ref={resultsRef} className="space-y-6">
           {/* Banners */}
-          {result.authenticated && (
+          {!result.demo && (
             <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800 flex items-center justify-between gap-4">
-              <span><strong>Datos reales.</strong> Analisis obtenido directamente desde la API oficial de Instagram.</span>
+              <span><strong>Datos reales.</strong> Informacion obtenida de la cuenta publica de Instagram.</span>
               <button onClick={reset} className="shrink-0 text-xs font-semibold text-green-700 hover:text-green-900 underline">
                 Nueva busqueda
               </button>
