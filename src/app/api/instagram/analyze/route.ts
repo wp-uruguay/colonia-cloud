@@ -183,7 +183,12 @@ export async function GET(req: NextRequest) {
       },
       demo: false,
     });
-  } catch {
-    return NextResponse.json(simulateEngagement(username));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[instagram-analyze] error:", message);
+    return NextResponse.json(
+      { error: `Error al consultar la API: ${message}` },
+      { status: 502 }
+    );
   }
 }
