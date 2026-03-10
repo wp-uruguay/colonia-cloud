@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY;
-const RAPIDAPI_HOST = "instagram-scraper-api2.p.rapidapi.com";
+const RAPIDAPI_HOST = "instagram-scraper.p.rapidapi.com";
 
 function simulateEngagement(username: string) {
   const seed = username.split("").reduce((acc, c) => acc + c.charCodeAt(0), 0);
@@ -85,11 +85,11 @@ export async function GET(req: NextRequest) {
 
     const [infoRes, postsRes] = await Promise.all([
       fetch(
-        `https://${RAPIDAPI_HOST}/v1/info?username_or_id_or_url=${encodeURIComponent(username)}`,
+        `https://${RAPIDAPI_HOST}/v1/info?username=${encodeURIComponent(username)}`,
         { headers, signal: AbortSignal.timeout(8000) }
       ),
       fetch(
-        `https://${RAPIDAPI_HOST}/v1/posts?username_or_id_or_url=${encodeURIComponent(username)}`,
+        `https://${RAPIDAPI_HOST}/v1/posts?username=${encodeURIComponent(username)}`,
         { headers, signal: AbortSignal.timeout(8000) }
       ),
     ]);
@@ -147,14 +147,14 @@ export async function GET(req: NextRequest) {
         following,
         posts,
         isVerified: user.is_verified ?? false,
-        accountType: user.is_business
+        accountType: (user.is_business_account || user.is_business)
           ? "business"
           : user.account_type === 2
           ? "creator"
           : "personal",
         bio: user.biography ?? "",
         fullName: user.full_name ?? username,
-        profilePic: user.hd_profile_pic_url_info?.url ?? user.profile_pic_url ?? null,
+        profilePic: user.profile_pic_url_hd ?? user.hd_profile_pic_url_info?.url ?? user.profile_pic_url ?? null,
       },
       engagement: {
         rate: engagementRate,
