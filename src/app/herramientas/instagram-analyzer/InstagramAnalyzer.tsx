@@ -20,6 +20,7 @@ interface AnalysisResult {
     avgComments: number;
     benchmark: number;
     status: "above" | "below";
+    estimated?: boolean;
   };
   shadowban: {
     status: "clean" | "warning" | "shadowbanned" | "unknown";
@@ -311,23 +312,35 @@ export default function InstagramAnalyzer() {
             <div className="glass rounded-2xl p-6 space-y-5">
               <div className="flex items-center justify-between">
                 <h3 className="font-semibold text-slate-900">Engagement</h3>
-                <span className={`text-xs font-semibold px-2 py-1 rounded-full ${
-                  result.engagement.status === "above"
-                    ? "bg-green-100 text-green-700"
-                    : "bg-red-100 text-red-700"
-                }`}>
-                  {result.engagement.status === "above" ? "↑ Sobre benchmark" : "↓ Bajo benchmark"}
-                </span>
+                <div className="flex items-center gap-2">
+                  {result.engagement.estimated && (
+                    <span className="text-xs px-2 py-1 rounded-full bg-amber-100 text-amber-700 font-medium" title="Los valores de engagement son estimaciones basadas en promedios de la industria para cuentas de este tamaño.">
+                      ~ Estimado
+                    </span>
+                  )}
+                  <span className={`text-xs font-semibold px-2 py-1 rounded-full ${
+                    result.engagement.status === "above"
+                      ? "bg-green-100 text-green-700"
+                      : "bg-red-100 text-red-700"
+                  }`}>
+                    {result.engagement.status === "above" ? "↑ Sobre benchmark" : "↓ Bajo benchmark"}
+                  </span>
+                </div>
               </div>
               <EngagementBar rate={result.engagement.rate} benchmark={result.engagement.benchmark} />
+              {result.engagement.estimated && (
+                <p className="text-xs text-amber-600">
+                  Los valores de likes y comentarios son estimaciones basadas en promedios de la industria para cuentas de este tamaño.
+                </p>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-xl bg-slate-50 p-3 text-center">
                   <p className="text-xs text-slate-500">Likes promedio</p>
-                  <p className="mt-1 text-lg font-semibold text-slate-900">{formatNumber(result.engagement.avgLikes)}</p>
+                  <p className="mt-1 text-lg font-semibold text-slate-900">{result.engagement.estimated ? "~" : ""}{formatNumber(result.engagement.avgLikes)}</p>
                 </div>
                 <div className="rounded-xl bg-slate-50 p-3 text-center">
                   <p className="text-xs text-slate-500">Comentarios prom.</p>
-                  <p className="mt-1 text-lg font-semibold text-slate-900">{formatNumber(result.engagement.avgComments)}</p>
+                  <p className="mt-1 text-lg font-semibold text-slate-900">{result.engagement.estimated ? "~" : ""}{formatNumber(result.engagement.avgComments)}</p>
                 </div>
               </div>
             </div>
