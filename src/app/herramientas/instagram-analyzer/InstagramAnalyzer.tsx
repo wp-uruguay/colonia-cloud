@@ -184,7 +184,7 @@ export default function InstagramAnalyzer() {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="nombre_de_usuario"
-                className="w-full rounded-xl border border-slate-200 bg-white py-3 pl-8 pr-4 text-slate-900 outline-none ring-0 transition placeholder:text-slate-400 focus:border-black focus:ring-1 focus:ring-black"
+                className="w-full rounded-xl border border-green-500 bg-white py-3 pl-8 pr-4 text-slate-900 outline-none ring-0 transition placeholder:text-slate-400 focus:border-black focus:ring-1 focus:ring-black"
                 autoComplete="off"
                 spellCheck={false}
               />
