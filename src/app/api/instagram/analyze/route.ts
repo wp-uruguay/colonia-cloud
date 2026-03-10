@@ -101,6 +101,10 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    if (infoRes.status === 429) {
+      return NextResponse.json({ ...simulateEngagement(username), demo: true, rateLimited: true });
+    }
+
     if (!infoRes.ok) {
       throw new Error(`API error: ${infoRes.status}`);
     }
