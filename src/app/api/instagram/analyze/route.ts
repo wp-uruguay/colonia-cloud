@@ -4,16 +4,47 @@ import { NextRequest, NextResponse } from "next/server";
 const cache = new Map<string, { data: unknown; ts: number }>();
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
-// Instagram's own web app ID — public, used by instagram.com itself
-const IG_APP_ID = "936619743392459";
+// Cached csrf token + cookie string (refreshed every 30 min)
+let cookieCache: { cookie: string; csrf: string; ts: number } | null = null;
+const COOKIE_TTL = 30 * 60 * 1000;
 
-function igHeaders() {
+// Instagram's own web app ID — public, used by instagram.com itself
+const IG_APP_ID = "936619743392456";
+
+const UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+
+async function getSessionCookies(): Promise<{ cookie: string; csrf: string }> {
+  if (cookieCache && Date.now() - cookieCache.ts < COOKIE_TTL) {
+    return cookieCache;
+  }
+
+  const res = await fetch("https://www.instagram.com/", {
+    headers: {
+      "User-Agent": UA,
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9",
+    },
+    signal: AbortSignal.timeout(8000),
+  });
+
+  const rawCookies = res.headers.getSetCookie?.() ?? [];
+  const cookieString = rawCookies.map((c) => c.split(";")[0]).join("; ");
+  const csrfMatch = cookieString.match(/csrftoken=([^;]+)/);
+  const csrf = csrfMatch?.[1] ?? "missing";
+
+  cookieCache = { cookie: cookieString, csrf, ts: Date.now() };
+  return cookieCache;
+}
+
+function igHeaders(cookie: string, csrf: string): Record<string, string> {
   return {
-    "User-Agent":
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "User-Agent": UA,
     Accept: "*/*",
     "Accept-Language": "en-US,en;q=0.9,es;q=0.8",
     "x-ig-app-id": IG_APP_ID,
+    "x-csrftoken": csrf,
+    Cookie: cookie,
     Referer: "https://www.instagram.com/",
     Origin: "https://www.instagram.com",
   };
@@ -74,12 +105,14 @@ function calcEngagement(username: string) {
 }
 
 async function fetchFromInstagram(username: string) {
+  const { cookie, csrf } = await getSessionCookies();
   const url = `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`;
   const res = await fetch(url, {
-    headers: igHeaders(),
+    headers: igHeaders(cookie, csrf),
     signal: AbortSignal.timeout(10000),
   });
 
+  console.log(`[ig] ${username} → ${res.status}`);
   if (res.status === 404) return { notFound: true };
   if (!res.ok) return { failed: true, status: res.status };
 
