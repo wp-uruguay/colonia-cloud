@@ -1,87 +1,43 @@
 import { NextRequest, NextResponse } from "next/server";
 
-// In-memory cache (1 hour per username)
 const cache = new Map<string, { data: unknown; ts: number }>();
 const CACHE_TTL = 60 * 60 * 1000;
-
-// Instagram serves full OpenGraph meta tags to search engine crawlers even from cloud IPs,
-// because they need Google/Twitter/Facebook to generate link previews.
-// og:description → "1.2M Followers, 500 Following, 100 Posts - See Instagram..."
-// og:title       → "Full Name (@username) • Instagram photos and videos"
-// og:image       → profile picture URL
 
 function parseIgNumber(raw: string): number {
   const s = raw.replace(/,/g, "").trim();
   const m = s.match(/^([\d.]+)\s*([KMB]?)$/i);
-  if (!m) return 0;
+  if (!m) return parseInt(s) || 0;
   const n = parseFloat(m[1]);
   const mult: Record<string, number> = { k: 1e3, m: 1e6, b: 1e9 };
   return Math.round(n * (mult[m[2].toLowerCase()] ?? 1));
 }
 
 function parseMeta(html: string, property: string): string {
-  // handles both property= and name= variants
-  const re = new RegExp(
-    `<meta[^>]+(?:property|name)=["']${property}["'][^>]+content=["']([^"']+)["']`,
-    "i"
-  );
-  const re2 = new RegExp(
-    `<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']${property}["']`,
-    "i"
-  );
-  return (html.match(re) ?? html.match(re2))?.[1] ?? "";
+  // Try property= before content= and vice versa, both quote styles
+  const patterns = [
+    new RegExp(`<meta[^>]+property=["']${property}["'][^>]+content=["']([^"'<>]+)["']`, "i"),
+    new RegExp(`<meta[^>]+content=["']([^"'<>]+)["'][^>]+property=["']${property}["']`, "i"),
+    new RegExp(`<meta[^>]+name=["']${property}["'][^>]+content=["']([^"'<>]+)["']`, "i"),
+    new RegExp(`<meta[^>]+content=["']([^"'<>]+)["'][^>]+name=["']${property}["']`, "i"),
+  ];
+  for (const re of patterns) {
+    const m = html.match(re);
+    if (m?.[1]) return m[1].replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&quot;/g, '"');
+  }
+  return "";
 }
 
-async function scrapeOpenGraph(username: string) {
-  // Googlebot UA: Instagram serves full HTML (including OG tags) to search crawlers
-  // even from AWS/Vercel IPs, because blocking them would hurt their SEO.
-  const res = await fetch(`https://www.instagram.com/${encodeURIComponent(username)}/`, {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
-      Accept: "text/html,application/xhtml+xml",
-      "Accept-Language": "en-US,en;q=0.9",
-    },
-    signal: AbortSignal.timeout(12000),
-    redirect: "follow",
-  });
+function extractFromJson(html: string, key: string): string {
+  // Matches "key":"value" or "key":123 or "key":true
+  const m = html.match(new RegExp(`"${key}"\\s*:\\s*([^,}\\]]+)`));
+  if (!m) return "";
+  return m[1].trim().replace(/^"(.*)"$/, "$1");
+}
 
-  console.log(`[ig-og] ${username} → ${res.status}`);
-
-  if (res.status === 404) return { notFound: true };
-  if (!res.ok) return { failed: true, status: res.status };
-
-  const html = await res.text();
-
-  // og:description → "1.2M Followers, 500 Following, 100 Posts - ..."
-  const desc = parseMeta(html, "og:description");
-  const descMatch = desc.match(
-    /^([\d.,]+\s*[KMBkmb]?)\s+Followers?,\s+([\d.,]+\s*[KMBkmb]?)\s+Following,\s+([\d.,]+\s*[KMBkmb]?)\s+Posts?/i
-  );
-
-  if (!descMatch) {
-    // No OG data means private account or login wall
-    console.warn(`[ig-og] no og:description for ${username}. desc="${desc.slice(0, 80)}"`);
-    return { notFound: true };
-  }
-
-  const followers = parseIgNumber(descMatch[1]);
-  const following = parseIgNumber(descMatch[2]);
-  const posts = parseIgNumber(descMatch[3]);
-
-  // og:title → "Full Name (@username) • Instagram photos and videos"
-  const title = parseMeta(html, "og:title");
-  const fullName = title.replace(/\s*\(@[^)]+\).*$/, "").trim() || username;
-
-  const profilePic = parseMeta(html, "og:image") || null;
-
-  // Bio sometimes appears after the posts count in og:description
-  const bioMatch = desc.match(/Posts?\s*[-–]\s*(.+?)(?:\s*on Instagram)?$/i);
-  const bio = bioMatch?.[1]?.trim() ?? "";
-
-  const isVerified = html.includes('"is_verified":true') || html.includes("Verified");
-
-  // Engagement: without per-post data we use industry-average rates by follower tier
-  // This is transparent — the UI should show these as estimates
+function buildResult(username: string, followers: number, following: number, posts: number, opts: {
+  fullName?: string; profilePic?: string | null; bio?: string; isVerified?: boolean;
+}) {
+  const { fullName = username, profilePic = null, bio = "", isVerified = false } = opts;
   const engRate =
     followers < 1000 ? 8.0
     : followers < 10000 ? 5.6
@@ -89,55 +45,118 @@ async function scrapeOpenGraph(username: string) {
     : followers < 100000 ? 1.8
     : followers < 500000 ? 1.3
     : 0.9;
-
   const avgLikes = Math.round((followers * engRate) / 100 * 0.92);
   const avgComments = Math.round((followers * engRate) / 100 * 0.08);
-  const benchmark =
-    followers < 10000 ? 3.5 : followers < 50000 ? 2.4 : followers < 100000 ? 1.8 : 1.2;
-
+  const benchmark = followers < 10000 ? 3.5 : followers < 50000 ? 2.4 : followers < 100000 ? 1.8 : 1.2;
   return {
     ok: true,
     data: {
       username,
-      profile: {
-        followers,
-        following,
-        posts,
-        isVerified,
-        accountType: "personal" as const,
-        bio,
-        fullName,
-        profilePic,
-      },
-      engagement: {
-        rate: engRate,
-        avgLikes,
-        avgComments,
-        benchmark,
-        status: engRate >= benchmark ? "above" : "below",
-        estimated: true, // flag so the UI can note these are estimates
-      },
-      shadowban: {
-        status: "unknown",
-        score: null,
-        hashtagReach: "unknown",
-        reelsReach: "unknown",
-        exploreReach: "unknown",
-        note: "La detección de shadowban no está disponible a través de datos públicos.",
-      },
-      posting: {
-        frequency: posts > 0 ? Math.max(1, Math.round(posts / 52)) : 0,
-        bestDays: null,
-        bestHours: null,
-      },
-      ratios: {
-        followerFollowing:
-          following > 0 ? parseFloat((followers / following).toFixed(1)) : followers,
-        engagementPerPost: avgLikes + avgComments,
-      },
+      profile: { followers, following, posts, isVerified, accountType: "personal" as const, bio, fullName, profilePic },
+      engagement: { rate: engRate, avgLikes, avgComments, benchmark, status: engRate >= benchmark ? "above" : "below", estimated: true },
+      shadowban: { status: "unknown", score: null, hashtagReach: "unknown", reelsReach: "unknown", exploreReach: "unknown", note: "La detección de shadowban no está disponible a través de datos públicos." },
+      posting: { frequency: posts > 0 ? Math.max(1, Math.round(posts / 52)) : 0, bestDays: null, bestHours: null },
+      ratios: { followerFollowing: following > 0 ? parseFloat((followers / following).toFixed(1)) : followers, engagementPerPost: avgLikes + avgComments },
       demo: false,
     },
   };
+}
+
+async function scrapeProfile(username: string) {
+  // Try multiple User-Agents — facebookexternalhit explicitly requests OG tags
+  // and Instagram must serve them to support Facebook link previews.
+  const UAs = [
+    "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+    "Twitterbot/1.0",
+    "LinkedInBot/1.0 (compatible; Mozilla/5.0; Apache-HttpClient +http://www.linkedin.com)",
+    "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+  ];
+
+  for (const ua of UAs) {
+    const res = await fetch(`https://www.instagram.com/${encodeURIComponent(username)}/`, {
+      headers: {
+        "User-Agent": ua,
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Cache-Control": "no-cache",
+      },
+      signal: AbortSignal.timeout(12000),
+      redirect: "follow",
+    });
+
+    const finalUrl = res.url;
+    console.log(`[ig] ${username} UA="${ua.slice(0, 30)}" → ${res.status} final=${finalUrl}`);
+
+    if (res.status === 404) return { notFound: true };
+
+    // Redirected to login
+    if (finalUrl.includes("/accounts/login") || finalUrl.includes("/challenge/")) {
+      console.warn(`[ig] login wall for ${username} with UA=${ua.slice(0, 30)}`);
+      continue;
+    }
+
+    if (!res.ok) continue;
+
+    const html = await res.text();
+
+    // Debug: log start of HTML to see what we're getting
+    console.log(`[ig] html[:300]="${html.slice(0, 300).replace(/\s+/g, " ")}"`);
+
+    // ── Strategy 1: OpenGraph meta tags ──────────────────────────────────────
+    const desc = parseMeta(html, "og:description");
+    console.log(`[ig] og:description="${desc.slice(0, 120)}"`);
+
+    const ogMatch = desc.match(
+      /([\d.,]+\s*[KMBkmb]?)\s+Followers?,\s+([\d.,]+\s*[KMBkmb]?)\s+Following,\s+([\d.,]+\s*[KMBkmb]?)\s+Posts?/i
+    );
+    if (ogMatch) {
+      const followers = parseIgNumber(ogMatch[1]);
+      const following = parseIgNumber(ogMatch[2]);
+      const posts = parseIgNumber(ogMatch[3]);
+      const title = parseMeta(html, "og:title");
+      const fullName = title.replace(/\s*[•|].*$/, "").replace(/\s*\(@[^)]+\)/, "").trim() || username;
+      const profilePic = parseMeta(html, "og:image") || null;
+      const bioMatch = desc.match(/Posts?\s*[-–]\s*(.+?)(?:\s*on Instagram)?\.?\s*$/i);
+      const bio = bioMatch?.[1]?.trim() ?? "";
+      const isVerified = html.includes('"is_verified":true');
+      console.log(`[ig] OG success: ${followers} followers`);
+      return buildResult(username, followers, following, posts, { fullName, profilePic, bio, isVerified });
+    }
+
+    // ── Strategy 2: Embedded JSON in script tags ──────────────────────────────
+    // Instagram embeds profile data as JSON in <script> tags
+    const followerRaw = extractFromJson(html, "follower_count") || extractFromJson(html, "edge_followed_by");
+    const followingRaw = extractFromJson(html, "following_count") || extractFromJson(html, "edge_follow");
+    const postsRaw = extractFromJson(html, "media_count") || extractFromJson(html, "edge_owner_to_timeline_media");
+
+    // edge_followed_by returns {"count":N} — extract count
+    const followers2 = parseInt(followerRaw.replace(/\D/g, "")) || 0;
+    const following2 = parseInt(followingRaw.replace(/\D/g, "")) || 0;
+    const posts2 = parseInt(postsRaw.replace(/\D/g, "")) || 0;
+
+    if (followers2 > 0) {
+      const fullName2 = extractFromJson(html, "full_name") || username;
+      const profilePic2 = extractFromJson(html, "profile_pic_url_hd") || extractFromJson(html, "profile_pic_url") || null;
+      const bio2 = extractFromJson(html, "biography") || "";
+      const isVerified2 = html.includes('"is_verified":true');
+      console.log(`[ig] JSON success: ${followers2} followers`);
+      return buildResult(username, followers2, following2, posts2, { fullName: fullName2, profilePic: profilePic2, bio: bio2, isVerified: isVerified2 });
+    }
+
+    // ── Strategy 3: Look for count patterns in raw HTML ───────────────────────
+    // Sometimes data appears as plain text: "80,200 followers"
+    const rawMatch = html.match(/([\d,]+)\s+[Ff]ollowers?/);
+    if (rawMatch) {
+      const followers3 = parseInt(rawMatch[1].replace(/,/g, ""));
+      console.log(`[ig] raw text success: ${followers3} followers`);
+      return buildResult(username, followers3, 0, 0, {});
+    }
+
+    console.warn(`[ig] no data found in HTML with UA=${ua.slice(0, 30)}, trying next UA`);
+  }
+
+  // All UAs exhausted
+  return { notFound: true };
 }
 
 function demoData(username: string) {
@@ -169,31 +188,24 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const username = searchParams.get("username")?.replace("@", "").trim();
 
-  if (!username) {
-    return NextResponse.json({ error: "Username requerido" }, { status: 400 });
-  }
-  if (!/^[a-zA-Z0-9._]{1,30}$/.test(username)) {
-    return NextResponse.json({ error: "Nombre de usuario inválido" }, { status: 400 });
-  }
+  if (!username) return NextResponse.json({ error: "Username requerido" }, { status: 400 });
+  if (!/^[a-zA-Z0-9._]{1,30}$/.test(username)) return NextResponse.json({ error: "Nombre de usuario inválido" }, { status: 400 });
 
   const cached = cache.get(username);
-  if (cached && Date.now() - cached.ts < CACHE_TTL) {
-    return NextResponse.json(cached.data);
-  }
+  if (cached && Date.now() - cached.ts < CACHE_TTL) return NextResponse.json(cached.data);
 
   try {
-    const result = await scrapeOpenGraph(username);
+    const result = await scrapeProfile(username);
 
-    if (result.notFound) {
+    if ("notFound" in result) {
       return NextResponse.json({ error: "Cuenta no encontrada o es privada" }, { status: 404 });
     }
 
-    if (result.ok && result.data) {
+    if ("ok" in result && result.data) {
       cache.set(username, { data: result.data, ts: Date.now() });
       return NextResponse.json(result.data);
     }
 
-    console.warn(`[ig] fallback demo for ${username}, status=${result.status}`);
     return NextResponse.json(demoData(username));
   } catch (err) {
     console.error("[ig] error:", err instanceof Error ? err.message : err);
