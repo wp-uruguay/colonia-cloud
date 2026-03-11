@@ -2,6 +2,13 @@
 
 import { useState, useRef } from "react";
 
+interface AiAnalysis {
+  summary: string;
+  strengths: string[];
+  improvements: string[];
+  recommendation: string;
+}
+
 interface AnalysisResult {
   username: string;
   profile: {
@@ -41,6 +48,7 @@ interface AnalysisResult {
   };
   demo: boolean;
   authenticated?: boolean;
+  aiAnalysis?: AiAnalysis | null;
 }
 
 function formatNumber(n: number): string {
@@ -406,6 +414,48 @@ export default function InstagramAnalyzer() {
               )}
             </div>
           </div>
+
+          {/* AI Analysis */}
+          {result.aiAnalysis && (
+            <div className="glass rounded-2xl p-6 space-y-5">
+              <div className="flex items-center gap-2">
+                <span className="text-base font-semibold text-slate-900">Análisis con IA</span>
+                <span className="rounded-full bg-black px-2 py-0.5 text-xs font-semibold text-white">Claude AI</span>
+              </div>
+
+              <p className="text-sm text-slate-600 leading-relaxed">{result.aiAnalysis.summary}</p>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="rounded-xl border border-green-100 bg-green-50 p-4 space-y-2">
+                  <p className="text-xs font-semibold uppercase text-green-700">Fortalezas</p>
+                  <ul className="space-y-1.5">
+                    {result.aiAnalysis.strengths.map((s, i) => (
+                      <li key={i} className="flex items-start gap-2 text-sm text-green-800">
+                        <span className="mt-0.5 shrink-0 text-green-500">✓</span>
+                        {s}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="rounded-xl border border-amber-100 bg-amber-50 p-4 space-y-2">
+                  <p className="text-xs font-semibold uppercase text-amber-700">Áreas de mejora</p>
+                  <ul className="space-y-1.5">
+                    {result.aiAnalysis.improvements.map((s, i) => (
+                      <li key={i} className="flex items-start gap-2 text-sm text-amber-800">
+                        <span className="mt-0.5 shrink-0 text-amber-500">→</span>
+                        {s}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <p className="text-xs font-semibold uppercase text-slate-500 mb-1">Recomendación principal</p>
+                <p className="text-sm text-slate-700">{result.aiAnalysis.recommendation}</p>
+              </div>
+            </div>
+          )}
 
           {/* CTA */}
           <div className="glass rounded-2xl p-6 flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-between">

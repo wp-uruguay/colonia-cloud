@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import Anthropic from "@anthropic-ai/sdk";
 
 const cache = new Map<string, { data: unknown; ts: number }>();
 const CACHE_TTL = 60 * 60 * 1000;
@@ -244,6 +245,64 @@ function demoData(username: string) {
   };
 }
 
+// ── Claude AI analysis ────────────────────────────────────────────────────────
+// Generates a human-readable AI analysis of the Instagram profile metrics.
+// Requires ANTHROPIC_API_KEY env var. Skipped gracefully if not set.
+async function generateAiAnalysis(data: {
+  username: string;
+  profile: { followers: number; following: number; posts: number; bio: string; accountType: string; isVerified: boolean };
+  engagement: { rate: number; avgLikes: number; avgComments: number; benchmark: number; status: string; estimated: boolean };
+  posting: { frequency: number };
+  ratios: { followerFollowing: number };
+  demo: boolean;
+}): Promise<{ summary: string; strengths: string[]; improvements: string[]; recommendation: string } | null> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return null;
+
+  try {
+    const client = new Anthropic({ apiKey });
+
+    const prompt = `Sos un experto en marketing digital y redes sociales. Analizá las siguientes métricas de una cuenta de Instagram y generá un análisis conciso y accionable en español rioplatense.
+
+Cuenta: @${data.username}
+Seguidores: ${data.profile.followers.toLocaleString("es")}
+Siguiendo: ${data.profile.following.toLocaleString("es")}
+Publicaciones: ${data.profile.posts}
+Bio: ${data.profile.bio || "(sin bio)"}
+Tipo de cuenta: ${data.profile.accountType}
+Verificada: ${data.profile.isVerified ? "sí" : "no"}
+Engagement rate: ${data.engagement.rate}% (benchmark del sector: ${data.engagement.benchmark}%)
+Engagement vs benchmark: ${data.engagement.status === "above" ? "por encima" : "por debajo"}
+Likes promedio: ${data.engagement.avgLikes}
+Comentarios promedio: ${data.engagement.avgComments}
+Posts por semana: ${data.posting.frequency}
+Ratio seguidores/siguiendo: ${data.ratios.followerFollowing}x
+${data.engagement.estimated ? "Nota: los datos de engagement son estimados (no tenemos acceso a posts individuales)." : ""}
+
+Respondé ÚNICAMENTE con un JSON válido con esta estructura exacta (sin markdown, sin explicaciones):
+{
+  "summary": "Resumen de 2-3 oraciones sobre el estado general de la cuenta",
+  "strengths": ["fortaleza 1", "fortaleza 2", "fortaleza 3"],
+  "improvements": ["área de mejora 1", "área de mejora 2", "área de mejora 3"],
+  "recommendation": "Una recomendación principal concreta y accionable de 1-2 oraciones"
+}`;
+
+    const message = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 600,
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    const text = message.content[0].type === "text" ? message.content[0].text.trim() : "";
+    // Strip possible markdown code fences
+    const clean = text.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
+    return JSON.parse(clean);
+  } catch (err) {
+    console.error("[ai] error:", err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const username = searchParams.get("username")?.replace("@", "").trim();
@@ -255,6 +314,8 @@ export async function GET(req: NextRequest) {
   if (cached && Date.now() - cached.ts < CACHE_TTL) return NextResponse.json(cached.data);
 
   try {
+    let profileData: ReturnType<typeof demoData> | null = null;
+
     // 1. Try Cloudflare Worker proxy (real data, different IPs)
     const workerResult = await fetchViaWorker(username);
     if (workerResult) {
@@ -262,29 +323,39 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: "Cuenta no encontrada o es privada" }, { status: 404 });
       }
       if ("ok" in workerResult && workerResult.data) {
-        cache.set(username, { data: workerResult.data, ts: Date.now() });
-        return NextResponse.json(workerResult.data);
+        profileData = workerResult.data as ReturnType<typeof demoData>;
       }
     }
 
-    // 2. Try direct scraping (works only if Instagram doesn't block this IP)
-    const result = await scrapeProfile(username);
+    // 2. Try direct scraping if worker didn't return data
+    if (!profileData) {
+      const result = await scrapeProfile(username);
 
-    if ("notFound" in result) {
-      return NextResponse.json({ error: "Cuenta no encontrada o es privada" }, { status: 404 });
+      if ("notFound" in result) {
+        return NextResponse.json({ error: "Cuenta no encontrada o es privada" }, { status: 404 });
+      }
+
+      if ("ok" in result && result.data) {
+        profileData = result.data as ReturnType<typeof demoData>;
+      }
     }
 
-    if ("ok" in result && result.data) {
-      cache.set(username, { data: result.data, ts: Date.now() });
-      return NextResponse.json(result.data);
+    // 3. Fallback to demo data
+    if (!profileData) {
+      profileData = demoData(username);
     }
 
-    // 3. loginWall: account exists but all IPs blocked — return demo
-    const demo = demoData(username);
-    cache.set(username, { data: demo, ts: Date.now() });
-    return NextResponse.json(demo);
+    // Generate AI analysis (only when ANTHROPIC_API_KEY is set)
+    const aiAnalysis = profileData.demo
+      ? null
+      : await generateAiAnalysis(profileData);
+
+    const response = { ...profileData, aiAnalysis };
+    cache.set(username, { data: response, ts: Date.now() });
+    return NextResponse.json(response);
   } catch (err) {
     console.error("[ig] error:", err instanceof Error ? err.message : err);
-    return NextResponse.json(demoData(username));
+    const fallback = { ...demoData(username), aiAnalysis: null };
+    return NextResponse.json(fallback);
   }
 }
