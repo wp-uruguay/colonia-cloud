@@ -155,8 +155,8 @@ async function scrapeProfile(username: string) {
     console.warn(`[ig] no data found in HTML with UA=${ua.slice(0, 30)}, trying next UA`);
   }
 
-  // All UAs exhausted
-  return { notFound: true };
+  // All UAs hit login wall — account likely exists but Instagram blocks DC IPs
+  return { loginWall: true };
 }
 
 function demoData(username: string) {
@@ -206,7 +206,10 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(result.data);
     }
 
-    return NextResponse.json(demoData(username));
+    // loginWall: account exists but Instagram blocks our DC IP — return demo
+    const demo = demoData(username);
+    cache.set(username, { data: demo, ts: Date.now() });
+    return NextResponse.json(demo);
   } catch (err) {
     console.error("[ig] error:", err instanceof Error ? err.message : err);
     return NextResponse.json(demoData(username));
