@@ -3,6 +3,66 @@ import { NextRequest, NextResponse } from "next/server";
 const cache = new Map<string, { data: unknown; ts: number }>();
 const CACHE_TTL = 60 * 60 * 1000;
 
+// ── Cloudflare Worker proxy ────────────────────────────────────────────────────
+// Set INSTAGRAM_PROXY_URL in Vercel env vars to enable real data.
+// See cloudflare-worker/ for the worker code and deploy instructions.
+async function fetchViaWorker(username: string) {
+  const proxyUrl = process.env.INSTAGRAM_PROXY_URL;
+  if (!proxyUrl) return null;
+
+  try {
+    const res = await fetch(`${proxyUrl}?username=${encodeURIComponent(username)}`, {
+      signal: AbortSignal.timeout(12000),
+    });
+
+    if (res.status === 404) return { notFound: true };
+    if (!res.ok) return null;
+
+    const json = await res.json() as { data?: { user?: Record<string, unknown> }; notFound?: boolean };
+    if (json.notFound) return { notFound: true };
+
+    const user = json?.data?.user;
+    if (!user) return null;
+
+    const followers = (user.follower_count ?? (user.edge_followed_by as { count?: number })?.count ?? 0) as number;
+    const following = (user.following_count ?? (user.edge_follow as { count?: number })?.count ?? 0) as number;
+    const posts = (user.media_count ?? (user.edge_owner_to_timeline_media as { count?: number })?.count ?? 0) as number;
+    const edges = ((user.edge_owner_to_timeline_media as { edges?: Array<{ node: { edge_liked_by?: { count: number }; edge_media_to_comment?: { count: number }; like_count?: number; comment_count?: number } }> })?.edges ?? []).slice(0, 12);
+
+    let avgLikes = 0, avgComments = 0;
+    if (edges.length > 0) {
+      avgLikes = Math.round(edges.reduce((s, e) => s + (e.node.edge_liked_by?.count ?? e.node.like_count ?? 0), 0) / edges.length);
+      avgComments = Math.round(edges.reduce((s, e) => s + (e.node.edge_media_to_comment?.count ?? e.node.comment_count ?? 0), 0) / edges.length);
+    }
+    const engRate = followers > 0 ? parseFloat((((avgLikes + avgComments) / followers) * 100).toFixed(2)) : 0;
+    const benchmark = followers < 10000 ? 3.5 : followers < 50000 ? 2.4 : followers < 100000 ? 1.8 : 1.2;
+
+    console.log(`[ig-worker] ${username} → ${followers} followers`);
+    return {
+      ok: true,
+      data: {
+        username: (user.username as string) ?? username,
+        profile: {
+          followers, following, posts,
+          isVerified: (user.is_verified as boolean) ?? false,
+          accountType: (user.is_business_account || user.is_business) ? "business" : user.account_type === 2 ? "creator" : "personal",
+          bio: (user.biography as string) ?? "",
+          fullName: (user.full_name as string) ?? username,
+          profilePic: (user.profile_pic_url_hd ?? user.profile_pic_url ?? null) as string | null,
+        },
+        engagement: { rate: engRate, avgLikes, avgComments, benchmark, status: engRate >= benchmark ? "above" : "below", estimated: edges.length === 0 },
+        shadowban: { status: "unknown", score: null, hashtagReach: "unknown", reelsReach: "unknown", exploreReach: "unknown", note: "La detección de shadowban no está disponible a través de datos públicos." },
+        posting: { frequency: posts > 0 ? Math.max(1, Math.round(posts / 52)) : 0, bestDays: null, bestHours: null },
+        ratios: { followerFollowing: following > 0 ? parseFloat((followers / following).toFixed(1)) : followers, engagementPerPost: avgLikes + avgComments },
+        demo: false,
+      },
+    };
+  } catch (err) {
+    console.error("[ig-worker] error:", err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
 function parseIgNumber(raw: string): number {
   const s = raw.replace(/,/g, "").trim();
   const m = s.match(/^([\d.]+)\s*([KMB]?)$/i);
@@ -195,6 +255,19 @@ export async function GET(req: NextRequest) {
   if (cached && Date.now() - cached.ts < CACHE_TTL) return NextResponse.json(cached.data);
 
   try {
+    // 1. Try Cloudflare Worker proxy (real data, different IPs)
+    const workerResult = await fetchViaWorker(username);
+    if (workerResult) {
+      if ("notFound" in workerResult) {
+        return NextResponse.json({ error: "Cuenta no encontrada o es privada" }, { status: 404 });
+      }
+      if ("ok" in workerResult && workerResult.data) {
+        cache.set(username, { data: workerResult.data, ts: Date.now() });
+        return NextResponse.json(workerResult.data);
+      }
+    }
+
+    // 2. Try direct scraping (works only if Instagram doesn't block this IP)
     const result = await scrapeProfile(username);
 
     if ("notFound" in result) {
@@ -206,7 +279,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(result.data);
     }
 
-    // loginWall: account exists but Instagram blocks our DC IP — return demo
+    // 3. loginWall: account exists but all IPs blocked — return demo
     const demo = demoData(username);
     cache.set(username, { data: demo, ts: Date.now() });
     return NextResponse.json(demo);
