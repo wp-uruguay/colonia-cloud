@@ -262,7 +262,7 @@ async function generateAiAnalysis(data: {
   try {
     const client = new Anthropic({ apiKey });
 
-    const prompt = `Sos un experto en marketing digital y redes sociales. Analizá las siguientes métricas de una cuenta de Instagram y generá un análisis conciso y accionable en español rioplatense.
+    const prompt = `Sos Faro, un asistente experto en marketing digital y redes sociales de Colonia Cloud. Analizá las siguientes métricas de una cuenta de Instagram y generá un análisis conciso y accionable en español rioplatense.
 
 Cuenta: @${data.username}
 Seguidores: ${data.profile.followers.toLocaleString("es")}

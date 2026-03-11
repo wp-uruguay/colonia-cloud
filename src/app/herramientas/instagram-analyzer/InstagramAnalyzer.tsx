@@ -419,8 +419,8 @@ export default function InstagramAnalyzer() {
           {result.aiAnalysis && (
             <div className="glass rounded-2xl p-6 space-y-5">
               <div className="flex items-center gap-2">
-                <span className="text-base font-semibold text-slate-900">Análisis con IA</span>
-                <span className="rounded-full bg-black px-2 py-0.5 text-xs font-semibold text-white">Claude AI</span>
+                <span className="text-base font-semibold text-slate-900">Análisis de Faro</span>
+                <span className="rounded-full bg-black px-2 py-0.5 text-xs font-semibold text-white">Faro IA</span>
               </div>
 
               <p className="text-sm text-slate-600 leading-relaxed">{result.aiAnalysis.summary}</p>
