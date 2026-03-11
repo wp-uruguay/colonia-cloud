@@ -17,14 +17,78 @@ const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 
 async function getSessionCookies() {
   const res = await fetch("https://www.instagram.com/", {
-    headers: { "User-Agent": UA, Accept: "text/html" },
+    headers: { "User-Agent": UA, Accept: "text/html", "Accept-Language": "en-US,en;q=0.9" },
   });
-  const cookies = (res.headers.get("set-cookie") ?? "").split(",")
+  // Cloudflare Workers: usar getAll para obtener todos los Set-Cookie por separado
+  const allCookies = res.headers.getAll
+    ? res.headers.getAll("set-cookie")
+    : [res.headers.get("set-cookie") ?? ""];
+  const cookies = allCookies
     .map(c => c.split(";")[0].trim())
     .filter(Boolean)
     .join("; ");
   const csrf = cookies.match(/csrftoken=([^;]+)/)?.[1] ?? "";
   return { cookies, csrf };
+}
+
+// Scrape OG tags del perfil público (fallback sin auth)
+async function scrapeOgTags(username) {
+  const UAs = [
+    "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+    "Twitterbot/1.0",
+    UA,
+  ];
+  for (const ua of UAs) {
+    const res = await fetch(`https://www.instagram.com/${encodeURIComponent(username)}/`, {
+      headers: {
+        "User-Agent": ua,
+        Accept: "text/html,application/xhtml+xml",
+        "Accept-Language": "en-US,en;q=0.9",
+      },
+    });
+    if (res.status === 404) return { notFound: true };
+    if (!res.ok) continue;
+    const finalUrl = res.url;
+    if (finalUrl.includes("/accounts/login") || finalUrl.includes("/challenge/")) continue;
+
+    const html = await res.text();
+    const getMeta = (prop) => {
+      const patterns = [
+        new RegExp(`<meta[^>]+property=["']${prop}["'][^>]+content=["']([^"'<>]+)["']`, "i"),
+        new RegExp(`<meta[^>]+content=["']([^"'<>]+)["'][^>]+property=["']${prop}["']`, "i"),
+      ];
+      for (const re of patterns) { const m = html.match(re); if (m?.[1]) return m[1]; }
+      return "";
+    };
+    const desc = getMeta("og:description");
+    const m = desc.match(/([\d.,]+\s*[KMBkmb]?)\s+Followers?,\s+([\d.,]+\s*[KMBkmb]?)\s+Following,\s+([\d.,]+\s*[KMBkmb]?)\s+Posts?/i);
+    if (m) {
+      const parse = (s) => {
+        const n = parseFloat(s.replace(/,/g, ""));
+        if (/k/i.test(s)) return Math.round(n * 1000);
+        if (/m/i.test(s)) return Math.round(n * 1e6);
+        return Math.round(n);
+      };
+      const title = getMeta("og:title");
+      const fullName = title.replace(/\s*[•|].*$/, "").replace(/\s*\(@[^)]+\)/, "").trim() || username;
+      const profilePic = getMeta("og:image") || null;
+      return {
+        data: {
+          user: {
+            username,
+            full_name: fullName,
+            profile_pic_url_hd: profilePic,
+            follower_count: parse(m[1]),
+            following_count: parse(m[2]),
+            media_count: parse(m[3]),
+            is_verified: html.includes('"is_verified":true'),
+            biography: "",
+          },
+        },
+      };
+    }
+  }
+  return null; // login wall o sin datos
 }
 
 export default {
@@ -47,6 +111,7 @@ export default {
     }
 
     try {
+      // Intento 1: Instagram internal API con cookies de sesión anónima
       const { cookies, csrf } = await getSessionCookies();
 
       const igRes = await fetch(
@@ -65,10 +130,18 @@ export default {
       );
 
       if (igRes.status === 404) return json({ notFound: true }, 404);
-      if (!igRes.ok) return json({ error: igRes.status }, igRes.status);
 
-      const data = await igRes.json();
-      return json(data);
+      if (igRes.ok) {
+        const data = await igRes.json();
+        if (data?.data?.user) return json(data);
+      }
+
+      // Intento 2: scraping de OG tags (si la API interna falla con 401/403)
+      const ogData = await scrapeOgTags(username);
+      if (!ogData) return json({ error: "login_wall" }, 503);
+      if ("notFound" in ogData) return json({ notFound: true }, 404);
+      return json(ogData);
+
     } catch (err) {
       return json({ error: String(err) }, 500);
     }
