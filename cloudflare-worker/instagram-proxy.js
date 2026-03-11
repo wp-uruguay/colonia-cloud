@@ -15,11 +15,16 @@
 const IG_APP_ID = "936619743392456";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 
-async function getSessionCookies() {
+async function getSessionCookies(env) {
+  // Si hay cookies reales configuradas como secret, usarlas directamente
+  if (env.IG_COOKIES) {
+    const csrf = env.IG_COOKIES.match(/csrftoken=([^;]+)/)?.[1] ?? "";
+    return { cookies: env.IG_COOKIES, csrf };
+  }
+  // Fallback: cookies anónimas desde la homepage
   const res = await fetch("https://www.instagram.com/", {
     headers: { "User-Agent": UA, Accept: "text/html", "Accept-Language": "en-US,en;q=0.9" },
   });
-  // Cloudflare Workers: usar getAll para obtener todos los Set-Cookie por separado
   const allCookies = res.headers.getAll
     ? res.headers.getAll("set-cookie")
     : [res.headers.get("set-cookie") ?? ""];
@@ -92,7 +97,7 @@ async function scrapeOgTags(username) {
 }
 
 export default {
-  async fetch(request) {
+  async fetch(request, env) {
     const url = new URL(request.url);
 
     // CORS preflight
@@ -112,7 +117,7 @@ export default {
 
     try {
       // Intento 1: Instagram internal API con cookies de sesión anónima
-      const { cookies, csrf } = await getSessionCookies();
+      const { cookies, csrf } = await getSessionCookies(env);
 
       const igRes = await fetch(
         `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
