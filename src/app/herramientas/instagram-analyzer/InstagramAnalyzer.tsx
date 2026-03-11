@@ -46,6 +46,8 @@ interface AnalysisResult {
     followerFollowing: number;
     engagementPerPost: number;
   };
+  topHashtags?: Array<{ tag: string; count: number }>;
+  contentBreakdown?: { photo: number; video: number; carousel: number };
   demo: boolean;
   authenticated?: boolean;
   aiAnalysis?: AiAnalysis | null;
@@ -415,6 +417,55 @@ export default function InstagramAnalyzer() {
             </div>
           </div>
 
+          {/* Content breakdown + Hashtags */}
+          {(result.contentBreakdown || result.topHashtags?.length) && (
+            <div className="grid gap-6 md:grid-cols-2">
+              {result.contentBreakdown && (() => {
+                const cb = result.contentBreakdown;
+                const total = cb.photo + cb.video + cb.carousel;
+                const types = [
+                  { label: "Fotos", value: cb.photo, color: "bg-blue-500" },
+                  { label: "Videos", value: cb.video, color: "bg-purple-500" },
+                  { label: "Carruseles", value: cb.carousel, color: "bg-pink-500" },
+                ].filter(t => t.value > 0);
+                return (
+                  <div className="glass rounded-2xl p-6 space-y-4">
+                    <h3 className="font-semibold text-slate-900">Tipos de contenido</h3>
+                    <p className="text-xs text-slate-500">Basado en las últimas {total} publicaciones</p>
+                    <div className="space-y-3">
+                      {types.map(t => (
+                        <div key={t.label} className="space-y-1">
+                          <div className="flex justify-between text-xs text-slate-500">
+                            <span>{t.label}</span>
+                            <span className="font-semibold text-slate-900">{t.value} <span className="text-slate-400">({Math.round((t.value / total) * 100)}%)</span></span>
+                          </div>
+                          <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                            <div className={`h-full rounded-full ${t.color} transition-all duration-700`} style={{ width: `${(t.value / total) * 100}%` }} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {result.topHashtags && result.topHashtags.length > 0 && (
+                <div className="glass rounded-2xl p-6 space-y-4">
+                  <h3 className="font-semibold text-slate-900">Hashtags más usados</h3>
+                  <p className="text-xs text-slate-500">Frecuencia en las últimas publicaciones</p>
+                  <div className="flex flex-wrap gap-2">
+                    {result.topHashtags.map(({ tag, count }) => (
+                      <span key={tag} className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700">
+                        {tag}
+                        {count > 1 && <span className="rounded-full bg-slate-200 px-1.5 py-0.5 text-xs font-bold text-slate-600">{count}</span>}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* AI Analysis */}
           {result.aiAnalysis && (
             <div className="glass rounded-2xl p-6 space-y-5">
@@ -477,12 +528,12 @@ export default function InstagramAnalyzer() {
               desc: "Mide la interaccion real de tu audiencia con tu contenido en base a likes y comentarios vs. seguidores.",
             },
             {
-              title: "Shadowban",
-              desc: "Detecta si tu cuenta tiene alcance reducido en hashtags, Explorar o Reels por violar politicas de Instagram.",
+              title: "Estrategia de contenido",
+              desc: "Analiza los tipos de contenido que publicás (fotos, videos, carruseles), tus hashtags más usados y los mejores horarios.",
             },
             {
-              title: "Metricas clave",
-              desc: "Ratio followers/following, frecuencia de publicacion y benchmarks por rango de seguidores.",
+              title: "Análisis IA",
+              desc: "Faro, el asistente de Colonia Cloud, lee todas tus métricas y te da fortalezas, áreas de mejora y una recomendación accionable.",
             },
           ].map((item) => (
             <div key={item.title} className="glass rounded-2xl p-5">

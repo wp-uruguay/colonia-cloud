@@ -28,13 +28,56 @@ async function fetchViaWorker(username: string) {
     const followers = (user.follower_count ?? (user.edge_followed_by as { count?: number })?.count ?? 0) as number;
     const following = (user.following_count ?? (user.edge_follow as { count?: number })?.count ?? 0) as number;
     const posts = (user.media_count ?? (user.edge_owner_to_timeline_media as { count?: number })?.count ?? 0) as number;
-    const edges = ((user.edge_owner_to_timeline_media as { edges?: Array<{ node: { edge_liked_by?: { count: number }; edge_media_to_comment?: { count: number }; like_count?: number; comment_count?: number } }> })?.edges ?? []).slice(0, 12);
+    type PostNode = {
+      edge_liked_by?: { count: number }; like_count?: number;
+      edge_media_to_comment?: { count: number }; comment_count?: number;
+      taken_at_timestamp?: number; is_video?: boolean; media_type?: number;
+      edge_media_to_caption?: { edges?: Array<{ node: { text: string } }> };
+    };
+    const edges = ((user.edge_owner_to_timeline_media as { edges?: Array<{ node: PostNode }> })?.edges ?? []).slice(0, 12);
 
     let avgLikes = 0, avgComments = 0;
     if (edges.length > 0) {
       avgLikes = Math.round(edges.reduce((s, e) => s + (e.node.edge_liked_by?.count ?? e.node.like_count ?? 0), 0) / edges.length);
       avgComments = Math.round(edges.reduce((s, e) => s + (e.node.edge_media_to_comment?.count ?? e.node.comment_count ?? 0), 0) / edges.length);
     }
+
+    // Extract post metadata for content analysis
+    const hashtagCounts: Record<string, number> = {};
+    const dayCounts: Record<string, number> = {};
+    const hourCounts: Record<string, number> = {};
+    const contentBreakdown = { photo: 0, video: 0, carousel: 0 };
+    const dayNames = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+
+    for (const { node } of edges) {
+      const caption = node.edge_media_to_caption?.edges?.[0]?.node?.text ?? "";
+      const tags = caption.match(/#[\w\u00C0-\u017F]+/g) ?? [];
+      for (const t of tags) {
+        const k = t.toLowerCase();
+        hashtagCounts[k] = (hashtagCounts[k] ?? 0) + 1;
+      }
+      if (node.taken_at_timestamp) {
+        const d = new Date(node.taken_at_timestamp * 1000);
+        const day = dayNames[d.getDay()];
+        const hour = `${d.getHours()}:00`;
+        dayCounts[day] = (dayCounts[day] ?? 0) + 1;
+        hourCounts[hour] = (hourCounts[hour] ?? 0) + 1;
+      }
+      if (node.media_type === 8) contentBreakdown.carousel++;
+      else if (node.is_video || node.media_type === 2) contentBreakdown.video++;
+      else contentBreakdown.photo++;
+    }
+
+    const topHashtags = Object.entries(hashtagCounts)
+      .sort((a, b) => b[1] - a[1]).slice(0, 10)
+      .map(([tag, count]) => ({ tag, count }));
+    const bestDays = edges.length > 0
+      ? Object.entries(dayCounts).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([d]) => d)
+      : null;
+    const bestHours = edges.length > 0
+      ? Object.entries(hourCounts).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([h]) => h)
+      : null;
+
     const engRate = followers > 0 ? parseFloat((((avgLikes + avgComments) / followers) * 100).toFixed(2)) : 0;
     const benchmark = followers < 10000 ? 3.5 : followers < 50000 ? 2.4 : followers < 100000 ? 1.8 : 1.2;
 
@@ -53,8 +96,10 @@ async function fetchViaWorker(username: string) {
         },
         engagement: { rate: engRate, avgLikes, avgComments, benchmark, status: engRate >= benchmark ? "above" : "below", estimated: edges.length === 0 },
         shadowban: { status: "unknown", score: null, hashtagReach: "unknown", reelsReach: "unknown", exploreReach: "unknown", note: "La detección de shadowban no está disponible a través de datos públicos." },
-        posting: { frequency: posts > 0 ? Math.max(1, Math.round(posts / 52)) : 0, bestDays: null, bestHours: null },
+        posting: { frequency: posts > 0 ? Math.max(1, Math.round(posts / 52)) : 0, bestDays, bestHours },
         ratios: { followerFollowing: following > 0 ? parseFloat((followers / following).toFixed(1)) : followers, engagementPerPost: avgLikes + avgComments },
+        topHashtags: topHashtags.length > 0 ? topHashtags : undefined,
+        contentBreakdown: edges.length > 0 ? contentBreakdown : undefined,
         demo: false,
       },
     };
@@ -252,8 +297,10 @@ async function generateAiAnalysis(data: {
   username: string;
   profile: { followers: number; following: number; posts: number; bio: string; accountType: string; isVerified: boolean };
   engagement: { rate: number; avgLikes: number; avgComments: number; benchmark: number; status: string; estimated?: boolean };
-  posting: { frequency: number };
+  posting: { frequency: number; bestDays?: string[] | null; bestHours?: string[] | null };
   ratios: { followerFollowing: number };
+  topHashtags?: Array<{ tag: string; count: number }>;
+  contentBreakdown?: { photo: number; video: number; carousel: number };
   demo: boolean;
 }): Promise<{ summary: string; strengths: string[]; improvements: string[]; recommendation: string } | null> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -276,7 +323,11 @@ Engagement vs benchmark: ${data.engagement.status === "above" ? "por encima" : "
 Likes promedio: ${data.engagement.avgLikes}
 Comentarios promedio: ${data.engagement.avgComments}
 Posts por semana: ${data.posting.frequency}
+${data.posting.bestDays?.length ? `Días con más publicaciones: ${data.posting.bestDays.join(", ")}` : ""}
+${data.posting.bestHours?.length ? `Horarios más frecuentes: ${data.posting.bestHours.join(", ")}` : ""}
 Ratio seguidores/siguiendo: ${data.ratios.followerFollowing}x
+${data.contentBreakdown ? `Tipos de contenido (últimos posts): ${data.contentBreakdown.photo} fotos, ${data.contentBreakdown.video} videos, ${data.contentBreakdown.carousel} carruseles` : ""}
+${data.topHashtags?.length ? `Hashtags más usados: ${data.topHashtags.slice(0, 6).map(h => h.tag).join(", ")}` : ""}
 ${data.demo ? "IMPORTANTE: los datos son estimados porque Instagram bloqueó el acceso a datos reales. Aclaralo brevemente en el summary." : data.engagement.estimated ? "Nota: los datos de engagement son estimados (no tenemos acceso a posts individuales)." : ""}
 
 Respondé ÚNICAMENTE con un JSON válido con esta estructura exacta (sin markdown, sin explicaciones):
@@ -310,6 +361,8 @@ type ProfileData = {
   shadowban: { status: string; score: null; hashtagReach: string; reelsReach: string; exploreReach: string; note: string };
   posting: { frequency: number; bestDays: string[] | null; bestHours: string[] | null };
   ratios: { followerFollowing: number; engagementPerPost: number };
+  topHashtags?: Array<{ tag: string; count: number }>;
+  contentBreakdown?: { photo: number; video: number; carousel: number };
   demo: boolean;
 };
 
