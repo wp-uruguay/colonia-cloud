@@ -251,7 +251,7 @@ function demoData(username: string) {
 async function generateAiAnalysis(data: {
   username: string;
   profile: { followers: number; following: number; posts: number; bio: string; accountType: string; isVerified: boolean };
-  engagement: { rate: number; avgLikes: number; avgComments: number; benchmark: number; status: string; estimated: boolean };
+  engagement: { rate: number; avgLikes: number; avgComments: number; benchmark: number; status: string; estimated?: boolean };
   posting: { frequency: number };
   ratios: { followerFollowing: number };
   demo: boolean;
@@ -303,6 +303,16 @@ Respondé ÚNICAMENTE con un JSON válido con esta estructura exacta (sin markdo
   }
 }
 
+type ProfileData = {
+  username: string;
+  profile: { followers: number; following: number; posts: number; isVerified: boolean; accountType: string; bio: string; fullName: string; profilePic: string | null };
+  engagement: { rate: number; avgLikes: number; avgComments: number; benchmark: number; status: string; estimated?: boolean };
+  shadowban: { status: string; score: null; hashtagReach: string; reelsReach: string; exploreReach: string; note: string };
+  posting: { frequency: number; bestDays: string[] | null; bestHours: string[] | null };
+  ratios: { followerFollowing: number; engagementPerPost: number };
+  demo: boolean;
+};
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const username = searchParams.get("username")?.replace("@", "").trim();
@@ -314,7 +324,7 @@ export async function GET(req: NextRequest) {
   if (cached && Date.now() - cached.ts < CACHE_TTL) return NextResponse.json(cached.data);
 
   try {
-    let profileData: ReturnType<typeof demoData> | null = null;
+    let profileData: ProfileData | null = null;
 
     // 1. Try Cloudflare Worker proxy (real data, different IPs)
     const workerResult = await fetchViaWorker(username);
@@ -323,7 +333,7 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: "Cuenta no encontrada o es privada" }, { status: 404 });
       }
       if ("ok" in workerResult && workerResult.data) {
-        profileData = workerResult.data as ReturnType<typeof demoData>;
+        profileData = workerResult.data as ProfileData;
       }
     }
 
@@ -336,16 +346,16 @@ export async function GET(req: NextRequest) {
       }
 
       if ("ok" in result && result.data) {
-        profileData = result.data as ReturnType<typeof demoData>;
+        profileData = result.data as ProfileData;
       }
     }
 
     // 3. Fallback to demo data
     if (!profileData) {
-      profileData = demoData(username);
+      profileData = demoData(username) as ProfileData;
     }
 
-    // Generate AI analysis (only when ANTHROPIC_API_KEY is set)
+    // Generate AI analysis (only when ANTHROPIC_API_KEY is set, skip for demo data)
     const aiAnalysis = profileData.demo
       ? null
       : await generateAiAnalysis(profileData);
