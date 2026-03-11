@@ -277,7 +277,7 @@ Likes promedio: ${data.engagement.avgLikes}
 Comentarios promedio: ${data.engagement.avgComments}
 Posts por semana: ${data.posting.frequency}
 Ratio seguidores/siguiendo: ${data.ratios.followerFollowing}x
-${data.engagement.estimated ? "Nota: los datos de engagement son estimados (no tenemos acceso a posts individuales)." : ""}
+${data.demo ? "IMPORTANTE: los datos son estimados porque Instagram bloqueó el acceso a datos reales. Aclaralo brevemente en el summary." : data.engagement.estimated ? "Nota: los datos de engagement son estimados (no tenemos acceso a posts individuales)." : ""}
 
 Respondé ÚNICAMENTE con un JSON válido con esta estructura exacta (sin markdown, sin explicaciones):
 {
@@ -355,10 +355,8 @@ export async function GET(req: NextRequest) {
       profileData = demoData(username) as ProfileData;
     }
 
-    // Generate AI analysis (only when ANTHROPIC_API_KEY is set, skip for demo data)
-    const aiAnalysis = profileData.demo
-      ? null
-      : await generateAiAnalysis(profileData);
+    // Generate AI analysis (always runs when ANTHROPIC_API_KEY is set)
+    const aiAnalysis = await generateAiAnalysis(profileData);
 
     const response = { ...profileData, aiAnalysis };
     cache.set(username, { data: response, ts: Date.now() });
